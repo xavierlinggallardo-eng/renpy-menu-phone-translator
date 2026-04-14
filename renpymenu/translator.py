@@ -1,6 +1,7 @@
 """
 Motor de traducción — wrapper simple sobre las APIs.
-Soporta Gemini, LibreTranslate y DeepL.
+Motor por defecto: Google Translate gratuito (sin API key).
+También soporta Gemini, LibreTranslate y DeepL.
 Incluye caché para no re-traducir.
 """
 
@@ -202,20 +203,119 @@ class DeepLTranslator:
         except: return [None]*len(texts)
 
 
+class GoogleFreeTranslator:
+    """
+    Google Translate GRATUITO — sin API key, sin límites duros.
+    Usa googletrans (wrapper no oficial) o deep_translator como fallback.
+    """
+    BATCH = 50
+
+    def __init__(self):
+        self._engine = None
+        self._engine_name = ""
+        self._init()
+
+    def _init(self):
+        # Intento 1: deep_translator (más estable)
+        try:
+            from deep_translator import GoogleTranslator
+            # Test rápido
+            GoogleTranslator(source='en', target='es').translate('hello')
+            self._engine = 'deep_translator'
+            self._engine_name = 'Google Translate (gratis)'
+            return
+        except Exception:
+            pass
+        # Intento 2: googletrans
+        try:
+            from googletrans import Translator as GT
+            t = GT()
+            t.translate('hello', dest='es')
+            self._engine = 'googletrans'
+            self._engine_name = 'Google Translate (gratis)'
+            return
+        except Exception:
+            pass
+
+    @property
+    def available(self):
+        return self._engine is not None
+
+    _LANG = {
+        "Spanish":"es","French":"fr","German":"de","Italian":"it",
+        "Portuguese":"pt","Russian":"ru","Japanese":"ja","Chinese":"zh-cn",
+        "Korean":"ko","Arabic":"ar","Dutch":"nl","Polish":"pl",
+        "Turkish":"tr","Ukrainian":"uk","Czech":"cs","Swedish":"sv",
+        "Romanian":"ro","Greek":"el","Hungarian":"hu","Finnish":"fi",
+        "Hindi":"hi","Vietnamese":"vi","Indonesian":"id","Thai":"th",
+    }
+
+    def translate_batch(self, texts: List[str], lang: str) -> List[Optional[str]]:
+        if not self.available:
+            return [None] * len(texts)
+        tgt = self._LANG.get(lang, lang.lower()[:2])
+        results = []
+        for text in texts:
+            protected, toks = _protect(text)
+            translated = self._translate_one(protected, tgt)
+            results.append(_restore(translated, toks) if translated else None)
+            time.sleep(0.05)  # pequeña pausa para no ser bloqueado
+        return results
+
+    def _translate_one(self, text: str, tgt: str) -> Optional[str]:
+        for attempt in range(3):
+            try:
+                if self._engine == 'deep_translator':
+                    from deep_translator import GoogleTranslator
+                    return GoogleTranslator(source='en', target=tgt).translate(text)
+                elif self._engine == 'googletrans':
+                    from googletrans import Translator as GT
+                    t = GT()
+                    result = t.translate(text, src='en', dest=tgt)
+                    return result.text
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(1.5 * (attempt + 1))
+        return None
+
+
 def make_translator(config: dict):
-    """Crea el mejor traductor disponible según la config."""
+    """
+    Crea el mejor traductor disponible.
+    Orden de prioridad:
+      1. Google Translate gratis (sin key — predeterminado)
+      2. Google Gemini (si hay API key)
+      3. DeepL (si hay API key)
+      4. LibreTranslate
+    """
+    # 1. Google Translate gratis — siempre intentar primero
+    gt = GoogleFreeTranslator()
+    if gt.available:
+        # Si hay Gemini key, usar Gemini (mejor calidad)
+        if config.get("gemini_api_key"):
+            g = GeminiTranslator(config["gemini_api_key"])
+            if g.available:
+                return g, "Google Gemini"
+        return gt, gt._engine_name
+
+    # 2. Gemini con key
     if config.get("gemini_api_key"):
-        t = GeminiTranslator(config["gemini_api_key"])
-        if t.available:
-            return t, "Google Gemini"
+        g = GeminiTranslator(config["gemini_api_key"])
+        if g.available:
+            return g, "Google Gemini"
+
+    # 3. DeepL
     if config.get("deepl_api_key"):
         t = DeepLTranslator(config["deepl_api_key"])
         if t.available:
             return t, "DeepL"
+
+    # 4. LibreTranslate
     url = config.get("libre_url", "https://libretranslate.com")
     t = LibreTranslator(url, config.get("libre_api_key",""))
     if t.available:
         return t, "LibreTranslate"
+
     return None, None
 
 
