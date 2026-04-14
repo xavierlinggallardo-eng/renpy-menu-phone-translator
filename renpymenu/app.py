@@ -51,6 +51,14 @@ class App(ctk.CTk):
 
         self._build()
         self._log("Listo. Selecciona el .exe o la carpeta del juego.")
+        # Verificar motor disponible al arrancar
+        from renpymenu.translator import make_translator
+        engine, name = make_translator(self.cfg)
+        if engine:
+            self._log(f"Motor activo: {name} ✓ (sin configuración extra necesaria)")
+        else:
+            self._log("⚠ Sin motor. Instala: pip install deep_translator")
+            self._log("  O añade una API key en ⚙ Ajustes.")
 
     # ── UI ────────────────────────────────────────────────────────────────────
 
@@ -327,7 +335,7 @@ class App(ctk.CTk):
                 )
                 return
 
-            self._log(f"Motor: {engine_name}")
+            self._log(f"Motor: {engine_name} ✓")
             self.translations = translate_all(
                 self.segments, engine, engine_name, lang, self.cache,
                 log=self._log,
